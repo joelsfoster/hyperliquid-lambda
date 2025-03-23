@@ -19,6 +19,15 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Docker
+.docker/
+*.tar
+
+# AWS Lambda deployment packages
+*.zip
+package/
+package-lambda/
 package/
 deployment-package.zip
 

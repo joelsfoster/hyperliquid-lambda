@@ -1,4 +1,7 @@
-hyperliquid-python-sdk>=0.10.1
-python-dotenv>=1.0.0
-eth-account>=0.5.9
-requests>=2.28.0
+hyperliquid-python-sdk==0.10.1
+python-dotenv==1.0.0
+eth-account>=0.10.0,<0.14.0
+requests>=2.31.0
+# Adding packages to fix ckzg dependency issue
+ckzg==2.1.0
+py-ecc==6.0.0

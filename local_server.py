@@ -117,31 +117,34 @@ def monitor_ngrok():
         logger.warning("Could not detect ngrok URL. Make sure ngrok is running with: ngrok http 80")
         logger.warning("If ngrok is already running, you can find your URL in the ngrok console")
 
-def run(server_class=HTTPServer, handler_class=WebhookHandler, port=80):
+def run(server_class=HTTPServer, handler_class=WebhookHandler, port=8080):
     """
     Run the webhook server on the specified port
     """
-    server_address = ('', port)
+    # Use 0.0.0.0 instead of empty string to ensure proper Docker network binding
+    server_address = ('0.0.0.0', port)
     
     try:
         httpd = server_class(server_address, handler_class)
         logger.info(f'Starting webhook server on port {port}...')
-        logger.info(f'Make sure ngrok is running with: ngrok http {port}')
         
-        # Start a thread to monitor ngrok and print the URL
-        ngrok_thread = threading.Thread(target=monitor_ngrok)
-        ngrok_thread.daemon = True
-        ngrok_thread.start()
+        if os.environ.get('RUNNING_IN_DOCKER', False):
+            logger.info(f'Running in Docker container')
+            logger.info(f'Make sure to run ngrok on your host machine with: ngrok http {port}')
+        else:
+            # Start a thread to monitor ngrok and print the URL
+            ngrok_thread = threading.Thread(target=monitor_ngrok)
+            ngrok_thread.daemon = True
+            ngrok_thread.start()
         
-        logger.info(f'Set up TradingView webhooks to point to your ngrok URL (will be displayed when available)')
-        logger.info(f'Make sure to set WEBHOOK_PASSWORD in your .env file')
+        logger.info(f'Set up TradingView webhooks to point to your ngrok URL')
+        logger.info(f'Make sure WEBHOOK_PASSWORD environment variable is set')
         httpd.serve_forever()
     except PermissionError:
-        logger.error(f"Permission denied: Cannot use port {port}. Try running with sudo or use a port > 1024.")
-        logger.info("Alternatively, you can run: sudo python local_server.py")
+        logger.error(f"Permission denied: Cannot use port {port}. Try using a port > 1024.")
         exit(1)
     except OSError as e:
-        if e.errno == 48:  # Address already in use
+        if e.errno == 48 or e.errno == 98:  # Address already in use (macOS or Linux)
             logger.error(f"Port {port} is already in use. Try a different port.")
         else:
             logger.error(f"Error starting server: {str(e)}")
