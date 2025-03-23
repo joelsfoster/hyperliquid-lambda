@@ -81,7 +81,7 @@ Configure TradingView alerts with webhooks pointing to your API Gateway endpoint
 {
   "password": "your_webhook_password",
   "action": "long",
-  "asset": "BTC",
+  "ticker": "BTC",
   "amountPercent": 50
 }
 ```

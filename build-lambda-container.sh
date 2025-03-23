@@ -14,7 +14,7 @@ IMAGE_TAG="latest"
 ECR_REPO_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME"
 
 echo "Building Docker image for Lambda deployment..."
-docker build -t $REPO_NAME:$IMAGE_TAG -f Dockerfile.lambda .
+docker build -t $REPO_NAME:$IMAGE_TAG .
 
 echo "Tagging image for ECR..."
 docker tag $REPO_NAME:$IMAGE_TAG $ECR_REPO_URI:$IMAGE_TAG
