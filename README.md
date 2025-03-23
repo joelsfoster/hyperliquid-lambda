@@ -1,27 +1,32 @@
 # Hyperliquid Lambda
 
-An AWS Lambda function for processing TradingView webhooks and executing trades on the Hyperliquid exchange.
+An AWS Lambda function for processing TradingView webhooks and executing trades on the Hyperliquid exchange. This serverless trading bot automatically executes trades based on TradingView alerts, enabling automated trading strategies without maintaining a dedicated server.
 
 ## Features
 
-- Receive and validate webhooks from TradingView
-- Source IP validation for TradingView webhook IPs
-- Webhook password authentication
-- Trading operations:
+- **Webhook Processing**:
+  - Receive and validate webhooks from TradingView
+  - Source IP validation for TradingView webhook IPs
+  - Webhook password authentication for security
+
+- **Trading Operations**:
   - Open long positions
   - Open short positions
-  - Close all positions
-- Smart position management:
+  - Close positions (specific asset or all positions)
+
+- **Smart Position Management**:
   - If "long" webhook with no long position: Open new long
   - If "long" webhook with existing long: Add to position
   - If "long" webhook with existing short: Reduce short
   - Same logic applies for short positions (vice versa)
   - "close" action closes all positions
-- Configurable trade size based on percent of available balance
-- Uses maximum allowable leverage per asset
-- Only supports trading perpetual futures (e.g., "CRV-USD") with cross-margin
-- Only supports market orders (no limit, stop, etc.)
-- Logging for easy debugging and monitoring
+
+- **Advanced Trading Features**:
+  - Configurable trade size based on percent of available balance
+  - Uses maximum allowable leverage per asset (e.g., 10x for CRV-USD)
+  - Only supports trading perpetual futures with cross-margin
+  - Only supports market orders (no limit, stop, etc.)
+  - Comprehensive logging for debugging and monitoring
 
 ## Prerequisites
 
@@ -143,13 +148,27 @@ Add the required environment variables via the AWS console:
 
 ### 4. Set Up API Gateway
 
-1. Create an API Gateway using the AWS CLI:
+#### Important: API Gateway Configuration for TradingView
+
+When setting up API Gateway for TradingView webhooks, ensure that you configure the **root path** (`/`) to receive POST requests, not a subpath. TradingView sends webhooks to the root endpoint.
+
+#### Option 1: Set up through AWS Console (Recommended for beginners)
+
+1. Go to the API Gateway console
+2. Create a new REST API (not HTTP API)
+3. Create a POST method on the **root resource** (`/`)
+4. Set the integration type to Lambda Function (Use Lambda Proxy integration)
+5. Select your `hyperliquid-tradingview-webhook` function
+6. Deploy the API to a stage (e.g., "prod")
+7. Note the API endpoint URL for configuring TradingView alerts
+
+#### Option 2: Set up through AWS CLI (For advanced users)
 
 ```bash
 # Create a REST API
 aws apigateway create-rest-api --name hyperliquid-webhook-api --region your-region
 
-# Get the API ID and root resource ID (save these values for subsequent commands)
+# Get the API ID and root resource ID
 api_id=$(aws apigateway get-rest-apis --query "items[?name=='hyperliquid-webhook-api'].id" --output text --region your-region)
 root_resource_id=$(aws apigateway get-resources --rest-api-id $api_id --query "items[?path=='/'].id" --output text --region your-region)
 
@@ -158,20 +177,14 @@ aws apigateway put-method --rest-api-id $api_id --resource-id $root_resource_id 
 
 # Create the Lambda integration
 aws apigateway put-integration --rest-api-id $api_id --resource-id $root_resource_id --http-method POST --type AWS_PROXY --integration-http-method POST --uri arn:aws:apigateway:your-region:lambda:path/2015-03-31/functions/arn:aws:lambda:your-region:your-account-id:function:hyperliquid-tradingview-webhook/invocations --region your-region
+
+# Deploy the API to a stage
+aws apigateway create-deployment --rest-api-id $api_id --stage-name prod --region your-region
 ```
 
-Or alternatively through the AWS Console:
-
-1. Go to the API Gateway console
-2. Create a new REST API
-3. Create a POST method on the root resource
-4. Set the integration type to Lambda Function
-5. Select your `hyperliquid-tradingview-webhook` function
-6. Enable CORS if needed
-7. Deploy the API to a stage (e.g., "prod")
-8. Note the API endpoint URL for configuring TradingView alerts
-
 ### 5. Add Lambda Permission for API Gateway
+
+Grant permission for API Gateway to invoke your Lambda function:
 
 ```bash
 aws lambda add-permission \
@@ -182,6 +195,19 @@ aws lambda add-permission \
 --source-arn "arn:aws:execute-api:your-region:your-account-id:$api_id/*/POST/" \
 --region your-region
 ```
+
+### 6. Test Your API Gateway Endpoint
+
+Before setting up TradingView, test your API endpoint with a curl command:
+
+```bash
+curl -X POST \
+  https://your-api-id.execute-api.your-region.amazonaws.com/prod \
+  -H "Content-Type: application/json" \
+  -d '{"action": "long", "ticker": "BTC", "amountPercent": 1, "password": "your_webhook_password"}'
+```
+
+Note: Replace `your_webhook_password` with the actual password you've set in your Lambda environment variables.
 
 ## Local Development and Testing
 
@@ -213,43 +239,163 @@ ngrok http 8080
 
 ## Setting Up TradingView Alerts
 
-1. Create a new alert in TradingView
-2. Set the "Alert actions" to "Webhook URL"
-3. Enter your API Gateway URL
-4. Configure the alert message body:
+### Prerequisites
+- TradingView Pro, Pro+, or Premium subscription (required for webhook functionality)
+- An active API Gateway endpoint as configured in previous steps
+
+### Creating Alerts for Different Actions
+
+#### 1. Long Position Alert
+
+1. In TradingView, open a chart for the asset you want to trade (e.g., BTC, ETH, CRV)
+2. Click the "Alerts" icon in the right sidebar
+3. Click "Create Alert"
+4. Configure your alert conditions (price crossing, indicator signals, etc.)
+5. In the "Alert actions" section, select "Webhook URL"
+6. Enter your API Gateway URL: `https://your-api-id.execute-api.your-region.amazonaws.com/prod`
+7. In the alert message body, enter:
 
 ```json
 {
   "action": "long",
   "ticker": "{{ticker}}",
-  "amountPercent": 5,
+  "amountPercent": 10,
   "password": "your_webhook_password"
 }
 ```
 
-5. Adjust `action` to "short" or "close" as needed
-6. Adjust `amountPercent` to control position size
+#### 2. Short Position Alert
+
+Follow the same steps as above, but use this message body:
+
+```json
+{
+  "action": "short",
+  "ticker": "{{ticker}}",
+  "amountPercent": 10,
+  "password": "your_webhook_password"
+}
+```
+
+#### 3. Close Position Alert
+
+Follow the same steps as above, but use this message body:
+
+```json
+{
+  "action": "close",
+  "ticker": "{{ticker}}",
+  "password": "your_webhook_password"
+}
+```
+
+### Webhook Format Details
+
+| Field | Description | Required | Default |
+|-------|-------------|----------|--------|
+| `action` | Trading action: `"long"`, `"short"`, or `"close"` | Yes | N/A |
+| `ticker` | Asset symbol (e.g., `"BTC"`, `"ETH"`, `"CRV"`) | Yes | N/A |
+| `amountPercent` | Percentage of available balance to use (1-100) | No | 5 |
+| `password` | Webhook authentication password | Yes | N/A |
+
+### Position Management Logic
+
+This bot implements smart position management:
+
+- **Long webhook**:
+  - No existing long: Opens a new long position
+  - Existing long: Adds to the position
+  - Existing short: Reduces the short position
+
+- **Short webhook**:
+  - No existing short: Opens a new short position
+  - Existing short: Adds to the position
+  - Existing long: Reduces the long position
+
+- **Close webhook**:
+  - Closes all positions for the specified asset
+
+### Trading Settings
+
+- Uses **maximum allowable leverage** for each asset (varies by asset)
+- Only supports **market orders** (no limit, stop, etc.)
+- Only works with **perpetual futures** on Hyperliquid
+- Uses **cross-margin** for all trades
 
 ## Security
 
-- Protect your private key and webhook password
-- Use API Gateway's resource policies to restrict access to TradingView IPs
-- Consider enabling AWS CloudTrail for auditing
+### Webhook Authentication
+
+This Lambda function implements several security measures:
+
+1. **Password Authentication**: Each webhook must include the correct password in the payload
+2. **IP Validation**: By default, only requests from known TradingView IP addresses are accepted
+3. **HTTPS Encryption**: All API Gateway endpoints use HTTPS (port 443) for secure communication
+
+### Securing Your Private Key
+
+The Lambda function requires your Hyperliquid private key to execute trades. To keep it secure:
+
+1. **Never commit your private key** to version control
+2. Store it as an encrypted environment variable in AWS Lambda
+3. Use AWS Parameter Store or Secrets Manager for additional security
+4. Consider rotating your private key periodically
+
+## Troubleshooting
+
+### Common Issues
+
+#### Lambda Function Not Receiving Webhooks
+
+1. **API Gateway Configuration**: Ensure your API Gateway is set up with a POST method on the **root path** (`/`), not a subpath
+2. **Lambda Permissions**: Verify API Gateway has permission to invoke your Lambda function
+3. **Webhook URL**: Double-check the webhook URL in your TradingView alerts matches your API Gateway endpoint exactly
+
+#### Lambda Function Receiving Webhooks But Not Trading
+
+1. **Invalid Password**: Check that the webhook password matches your Lambda environment variable
+2. **Missing Environment Variables**: Ensure all required environment variables are set in Lambda:
+   - `HYPERLIQUID_PRIVATE_KEY`
+   - `WEBHOOK_PASSWORD`
+   - `HYPERLIQUID_USE_MAINNET`
+3. **Insufficient Funds**: Verify your Hyperliquid account has sufficient funds for trading
+
+### Checking Logs
+
+To view Lambda execution logs:
+
+```bash
+aws logs get-log-events \
+  --log-group-name /aws/lambda/hyperliquid-tradingview-webhook \
+  --log-stream-name $(aws logs describe-log-streams \
+    --log-group-name /aws/lambda/hyperliquid-tradingview-webhook \
+    --order-by LastEventTime \
+    --descending \
+    --limit 1 \
+    --query 'logStreams[0].logStreamName' \
+    --output text) \
+  --region your-region
+```
+
+Alternatively, view logs in the AWS Lambda console under the "Monitor" tab.
+
+## Additional Security Best Practices
+
 - Use IAM roles with least privilege for the Lambda function
+- Consider enabling AWS CloudTrail for auditing API calls
+- Regularly review CloudWatch logs for suspicious activity
 
-## Position Management Logic
+## Repository Information
 
-This Lambda implements smart position management with the following behavior:
+This project is maintained by Joel Foster.
 
-- If "long" webhook with no existing position: Opens a new long position
-- If "long" webhook with existing long position: Adds to the existing position
-- If "long" webhook with existing short position: Closes the existing short, then opens a new long position
-- Same logic applies for "short" positions (vice versa)
-- "close" action closes all positions for the specified asset
+- **GitHub Repository**: [https://github.com/joelsfoster/hyperliquid-lambda](https://github.com/joelsfoster/hyperliquid-lambda)
+- **License**: MIT
 
-## Known Limitations
+## Related Projects
 
-- Only supports market orders (no limit, stop, or other order types)
-- Uses maximum available leverage for each asset
-- Only validates known TradingView IP addresses
-- Only supports cross-margin trading
+- [Hyperliquid CLI](https://github.com/joelsfoster/hyperliquid-cli) - A Python CLI for trading on Hyperliquid
+
+## License
+
+MIT License
