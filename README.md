@@ -71,47 +71,117 @@ git clone <your-repo-url>
 cd hyperliquid-lambda
 ```
 
-2. Update AWS account details in `build-lambda-container.sh`:
-   - Set `AWS_ACCOUNT_ID` to your AWS account ID
-   - Set `AWS_REGION` to your preferred region (e.g., "us-east-1")
-
-3. Build and push the Docker image to Amazon ECR:
+2. Build the Docker image with the required flags to ensure AWS Lambda compatibility:
 
 ```bash
-# First, make the script executable
-chmod +x build-lambda-container.sh
-
-# Then run it to build and push the image
-./build-lambda-container.sh
+# Build the Docker image with provenance=false to ensure AWS Lambda compatibility
+docker build --platform=linux/amd64 --provenance=false -t hyperliquid-lambda:latest .
 ```
 
-If you don't have AWS CLI installed, you'll need to:
-- Install AWS CLI according to the [official instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-- Configure AWS CLI with `aws configure`
+> **Important**: The `--provenance=false` flag is critical when building Docker images for AWS Lambda. Without this flag, the image manifest format may be incompatible with Lambda, resulting in the error: "The image manifest, config or layer media type for the source image is not supported."
 
-Alternatively, you can manually deploy through the AWS Console as outlined in the instructions that will appear when running the script without AWS CLI.
+3. Create an Amazon ECR repository (if you don't already have one):
 
-### 2. Create or Update Lambda Function
+```bash
+aws ecr create-repository --repository-name hyperliquid-lambda --region your-region
+```
+
+4. Authenticate Docker to your ECR registry:
+
+```bash
+aws ecr get-login-password --region your-region | docker login --username AWS --password-stdin your-account-id.dkr.ecr.your-region.amazonaws.com
+```
+
+5. Tag and push the Docker image to Amazon ECR:
+
+```bash
+# Tag the image
+docker tag hyperliquid-lambda:latest your-account-id.dkr.ecr.your-region.amazonaws.com/hyperliquid-lambda:latest
+
+# Push the image
+docker push your-account-id.dkr.ecr.your-region.amazonaws.com/hyperliquid-lambda:latest
+```
+
+Replace `your-account-id` and `your-region` with your AWS account ID and preferred region.
+
+### 2. Create the Lambda Function
+
+1. Create the Lambda function using the AWS CLI (replace placeholders with your actual values):
+
+```bash
+aws lambda create-function \
+--region your-region \
+--function-name hyperliquid-tradingview-webhook \
+--package-type Image \
+--code ImageUri=your-account-id.dkr.ecr.your-region.amazonaws.com/hyperliquid-lambda:latest \
+--role arn:aws:iam::your-account-id:role/your-lambda-execution-role \
+--timeout 60 \
+--memory-size 256
+```
+
+Alternatively, through the AWS Lambda console:
 
 1. Go to the AWS Lambda console
-2. Create a new function or select your existing function
+2. Create a new function
 3. Choose "Container image" as the source
-4. Select or enter the ECR image URI
+4. Select the ECR image URI you pushed earlier
 5. Configure these function settings:
-   - Memory: At least 512MB (recommended)
-   - Timeout: At least 30 seconds
-   - Environment variables (add all required variables listed above)
+   - Memory: 256MB (or more if needed)
+   - Timeout: 60 seconds
 
-### 3. Set Up API Gateway
+### 3. Configure Environment Variables
+
+Add the required environment variables via the AWS console:
+
+1. Go to your Lambda function
+2. Select the "Configuration" tab
+3. Click on "Environment variables"
+4. Add the following environment variables:
+   - `HYPERLIQUID_PRIVATE_KEY`: Your Hyperliquid wallet private key
+   - `WEBHOOK_PASSWORD`: A secure password for webhook validation
+   - `HYPERLIQUID_USE_MAINNET`: Set to "true" for mainnet or "false" for testnet
+
+### 4. Set Up API Gateway
+
+1. Create an API Gateway using the AWS CLI:
+
+```bash
+# Create a REST API
+aws apigateway create-rest-api --name hyperliquid-webhook-api --region your-region
+
+# Get the API ID and root resource ID (save these values for subsequent commands)
+api_id=$(aws apigateway get-rest-apis --query "items[?name=='hyperliquid-webhook-api'].id" --output text --region your-region)
+root_resource_id=$(aws apigateway get-resources --rest-api-id $api_id --query "items[?path=='/'].id" --output text --region your-region)
+
+# Create a POST method on the root resource
+aws apigateway put-method --rest-api-id $api_id --resource-id $root_resource_id --http-method POST --authorization-type NONE --region your-region
+
+# Create the Lambda integration
+aws apigateway put-integration --rest-api-id $api_id --resource-id $root_resource_id --http-method POST --type AWS_PROXY --integration-http-method POST --uri arn:aws:apigateway:your-region:lambda:path/2015-03-31/functions/arn:aws:lambda:your-region:your-account-id:function:hyperliquid-tradingview-webhook/invocations --region your-region
+```
+
+Or alternatively through the AWS Console:
 
 1. Go to the API Gateway console
-2. Create a new REST API or select your existing API
-3. Create a new resource and POST method
+2. Create a new REST API
+3. Create a POST method on the root resource
 4. Set the integration type to Lambda Function
-5. Select your Lambda function
+5. Select your `hyperliquid-tradingview-webhook` function
 6. Enable CORS if needed
-7. Deploy the API to a stage
+7. Deploy the API to a stage (e.g., "prod")
 8. Note the API endpoint URL for configuring TradingView alerts
+
+### 5. Add Lambda Permission for API Gateway
+
+```bash
+aws lambda add-permission \
+--function-name hyperliquid-tradingview-webhook \
+--statement-id apigateway-permission \
+--action lambda:InvokeFunction \
+--principal apigateway.amazonaws.com \
+--source-arn "arn:aws:execute-api:your-region:your-account-id:$api_id/*/POST/" \
+--region your-region
+```
 
 ## Local Development and Testing
 
@@ -126,8 +196,8 @@ HYPERLIQUID_USE_MAINNET=false  # Use testnet for testing
 2. Run the local server with Docker for development testing:
 
 ```bash
-# Build a local development image
-docker build -t hyperliquid-lambda:dev .
+# Build a local development image with the proper flags
+docker build --platform=linux/amd64 --provenance=false -t hyperliquid-lambda:dev .
 
 # Run the container with local server
 docker run -p 8080:8080 -v $(pwd)/.env:/var/task/.env hyperliquid-lambda:dev python local_server.py
@@ -139,45 +209,7 @@ docker run -p 8080:8080 -v $(pwd)/.env:/var/task/.env hyperliquid-lambda:dev pyt
 ngrok http 8080
 ```
 
-5. Configure your TradingView alert to use the ngrok URL displayed by the local server
-
-## Deployment to AWS Lambda
-
-1. Package your application:
-
-```bash
-# Create a deployment package
-mkdir -p package
-pip install -r requirements.txt -t package/
-cp -r src package/
-cd package
-zip -r ../deployment-package.zip .
-cd ..
-```
-
-2. Create a Lambda function in the AWS Management Console:
-   - Runtime: Python 3.9+
-   - Handler: src.lambda_function.lambda_handler
-   - Timeout: 60 seconds (trades can take some time to execute)
-   - Memory: 256MB should be sufficient
-
-3. Upload the deployment package to Lambda:
-   - In the Lambda console, select your function
-   - Under "Code source", select "Upload from" → ".zip file"
-   - Upload your deployment-package.zip file
-
-4. Configure environment variables in the Lambda console:
-   - HYPERLIQUID_PRIVATE_KEY
-   - WEBHOOK_PASSWORD
-   - HYPERLIQUID_USE_MAINNET
-
-5. Set up API Gateway:
-   - Create a new REST API
-   - Add a POST method to the root resource
-   - Deploy the API to a stage
-   - Use the provided URL for your TradingView webhook
-   
-6. Configure Lambda resource policies to allow API Gateway to invoke the function
+4. Configure your TradingView alert to use the ngrok URL displayed by the local server
 
 ## Setting Up TradingView Alerts
 

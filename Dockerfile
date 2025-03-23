@@ -1,14 +1,14 @@
-FROM public.ecr.aws/lambda/python:3.9
+FROM public.ecr.aws/lambda/python:3.13
 
-# Copy requirements file
-COPY requirements.txt ${LAMBDA_TASK_ROOT}
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt /tmp/
 
-# Install the specified packages
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Install dependencies
+RUN pip3 install --upgrade pip && \
+    pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Copy function code
 COPY src/ ${LAMBDA_TASK_ROOT}/src/
 
-# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
+# Set the handler
 CMD [ "src.lambda_function.lambda_handler" ]

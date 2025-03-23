@@ -4,7 +4,7 @@ set -e
 # Set your AWS account ID and region
 # You'll need to customize these values
 AWS_ACCOUNT_ID="351933854076"
-AWS_REGION="us-east-1"
+AWS_REGION="us-east-2"
 
 # Set repository name and image tag
 REPO_NAME="hyperliquid-lambda"
@@ -14,7 +14,10 @@ IMAGE_TAG="latest"
 ECR_REPO_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME"
 
 echo "Building Docker image for Lambda deployment..."
-docker build -t $REPO_NAME:$IMAGE_TAG .
+# CRITICAL: Using --platform=linux/amd64 and --provenance=false flags to ensure AWS Lambda compatibility
+docker build --platform=linux/amd64 --provenance=false -t $REPO_NAME:$IMAGE_TAG .
+
+echo "Build completed with AWS Lambda compatibility flags."
 
 echo "Tagging image for ECR..."
 docker tag $REPO_NAME:$IMAGE_TAG $ECR_REPO_URI:$IMAGE_TAG
